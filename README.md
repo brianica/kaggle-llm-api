@@ -81,6 +81,45 @@ On T4/P100 models run in fp16, because those GPUs have no bf16.
 - **auto**: tries vLLM and falls back to llama.cpp if vLLM fails to start. The `qwen3-coder-30b` preset uses this,
   because vLLM's 4-bit MoE kernels mostly target newer GPUs than the T4.
 
+## Load testing
+
+`loadtest.py` ramps through concurrency levels and reports what agents feel at each one:
+success rate, time to first token (TTFT), full-request latency, streaming speed per client and total throughput.
+It then states the highest concurrency that met your targets and where the GPU saturated.
+
+```bash
+pip install aiohttp
+export OPENAI_API_KEY=sk-...        # the key the notebook printed
+python loadtest.py --base-url https://YOUR-TUNNEL/v1
+```
+
+| Option | What it tests |
+|---|---|
+| `-c 1,4,16,32,64` | Concurrency levels to ramp through (default `1,2,4,8,16,32,64`) |
+| `--prompt-tokens 6000` | Long, code-heavy prompts, like an agent's repository context |
+| `--shared-prefix` | All requests share that context, which tests prefix caching (one agent's multi-turn session); without it, every prompt is unique (worst case) |
+| `--tools` | Sends tool definitions and reports how often the model answers with a tool call |
+| `--max-tokens 256` | Output length per request |
+| `--max-ttft 10 --min-user-tok-s 5` | Targets used for the "highest concurrency" verdict |
+| `--json results.json` | Saves every level's numbers |
+
+Example output (from a simulated server with 8 batch slots):
+
+```
+ conc  reqs    ok%  req/s   tok/s  TTFT p50  TTFT p95  lat p50  lat p95 tok/s/user slowest5%
+    1     2 100.0%   1.03      66     0.05s     0.06s     1.0s     1.0s       68.8      68.7
+    8    16 100.0%   3.98     255     0.05s     0.06s     2.0s     2.0s       32.2      32.2
+   16    32 100.0%   3.96     253     2.07s     2.08s     4.0s     4.0s       32.0      31.9
+   32    64 100.0%   3.97     254     6.09s     6.11s     8.1s     8.1s       32.1      31.9
+
+  Throughput stopped growing between 8 and 16 clients: the GPU is saturated, and extra clients mostly wait in the queue (TTFT goes up).
+```
+
+To measure the GPU without the tunnel, upload `loadtest.py` to the notebook and run
+`!python loadtest.py --base-url http://127.0.0.1:8000/v1 --api-key "$API_KEY"` in a cell after section 6
+(the notebook fills in `$API_KEY` from its own `API_KEY` variable). Comparing that with a run
+through the public URL shows how much the tunnel costs.
+
 ## Troubleshooting
 
 - **Out of memory**: lower `MAX_NUM_SEQS`, `max_model_len` or `GPU_MEM_UTIL`, or add `--enforce-eager`.
